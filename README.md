@@ -30,3 +30,25 @@ aider-install
 ```
 
 This will install to `${HOME}/.local/bin`.
+
+# Aider  + Ollama
+
+[Aider](https://aider.chat/docs/llms/ollama.html) can connect to local Ollama models; port 11434 is the default.
+
+```console
+export OLLAMA_API_BASE=http://127.0.0.1:11434
+```
+
+Pull a model.
+
+```console
+ollama pull phi4:latest
+```
+
+Start `aider`.
+
+```console
+aider --model ollama_chat/phi4:latest
+```
+
+Type `/exit` to quit.
