@@ -39,10 +39,49 @@ This will install to `${HOME}/.local/bin`.
 export OLLAMA_API_BASE=http://127.0.0.1:11434
 ```
 
+Stop service.
+
+```console
+sudo systemctl stop ollama
+```
+
+Edit service.
+
+```console
+sudo EDITOR="vim" systemctl edit ollama
+```
+```
+[Service]
+Environment="OLLAMA_CONTEXT_LENGTH=8192"
+```
+
+Start service.
+
+```console
+sudo systemctl start ollama
+```
+
 Pull a model.
 
 ```console
 ollama pull phi4:latest
+```
+
+Check context length.
+
+```console
+ollama run phi4:latest
+ollama ps
+```
+```
+NAME           ID              SIZE     PROCESSOR    CONTEXT    UNTIL
+phi4:latest    ac896e5b8b34    10 GB    100% CPU     8192       4 minutes from now
+```
+
+Exit after checking.
+
+```
+>>> /exit
 ```
 
 Start `aider`.
