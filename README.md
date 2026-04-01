@@ -91,3 +91,20 @@ aider --model ollama_chat/phi4:latest
 ```
 
 Type `/exit` to quit.
+
+# Aider commands
+
+| Command         | What It Does            |
+| -               | -                       |
+| `/add` filename | Add a file to the chat/ |
+| `drop` filename | Remove a file from chat |
+| `/ls`           | List files in chat      |
+| `/run` command  | Run a shell command     |
+| `/undo`         | Undo last change        |
+| `/diff`         | Show changes made       |
+| `/clear`        | Clear chat history      |
+| `/exit`         | Exit aider              |
+
+# Tips
+
+See [Tips](https://aider.chat/docs/usage/tips.html).
