@@ -1,9 +1,17 @@
 # Run LLMs locally
 
-[Install Ollama](https://ollama.com/download):
+[Install Ollama](https://ollama.com/download) (and update) using:
 
 ```console
 curl -fsSL https://ollama.com/install.sh | sh
+```
+
+# Claude Code
+
+You can use local models with Claude Code (although I feel like this defeats the purpose of using local models):
+
+```console
+ollama launch claude --model phi4:latest
 ```
 
 # Create Python virtual environment
