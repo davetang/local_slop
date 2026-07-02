@@ -1,9 +1,20 @@
-# Run LLMs locally
+# Ollama
 
-[Install Ollama](https://ollama.com/download) (and update) using:
+To run LLMs locally you can use [Ollama](https://ollama.com/download); installing and updating use the same command:
 
 ```console
 curl -fsSL https://ollama.com/install.sh | sh
+```
+
+## Server
+
+To use another instance of Ollama running on the network.
+
+```bash
+export OLLAMA_HOST=http://192.168.1.50:11434
+
+# when you're done
+unset OLLAMA_HOST
 ```
 
 # Claude Code
