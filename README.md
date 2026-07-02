@@ -8,6 +8,29 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 ## Server
 
+First change the systemd service.
+
+```console
+sudo EDITOR=vim systemctl edit ollama.service
+```
+
+Add:
+
+```
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:11434"
+```
+
+Reload and restart:
+
+```console
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+
+# check
+ss -tlnp | grep 11434
+```
+
 To use another instance of Ollama running on the network.
 
 ```bash
