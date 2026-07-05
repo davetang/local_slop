@@ -208,7 +208,7 @@ Model quality is the single biggest lever on how usable a local coding assistant
 
 If you have the RAM, start with `qwen2.5-coder:32b` or `qwen3-coder:30b`; they are the most reliable inside Aider. For heavier multi-file work try `devstral:24b`. Prefer models tagged `-coder` or `-instruct`, which follow editing instructions better than base models.
 
-> **Note:** the table reflects widely cited 2026 community rankings (linked under [Tips and further reading](#tips-and-further-reading)). Like Aider's own [leaderboard](https://aider.chat/docs/leaderboards/edit.html), rankings are informative but not proof of fitness for *your* codebase; try a model and watch the diffs.
+> **Note:** the table reflects widely cited 2026 community rankings (linked under [Aider tips and further reading](#aider-tips-and-further-reading)). Like Aider's own [leaderboard](https://aider.chat/docs/leaderboards/edit.html), rankings are informative but not proof of fitness for *your* codebase; try a model and watch the diffs.
 
 # Aider + Ollama
 
@@ -381,7 +381,7 @@ Local models are weaker than frontier hosted models. These habits make them beha
 
 > **Note:** even well-tuned, a 30B local model will not match hosted frontier models on hard, open-ended tasks. Local Aider shines on surgical, well-scoped, privacy-sensitive, or offline edits.
 
-# Troubleshooting
+# Aider troubleshooting
 
 | Symptom                                                | Likely cause and fix                                                                                                |
 | -                                                      | -                                                                                                                   |
@@ -393,7 +393,7 @@ Local models are weaker than frontier hosted models. These habits make them beha
 | Very slow responses                                    | Model larger than your RAM/VRAM comfortably holds, so it is swapping; pick a smaller model and check `ollama ps`    |
 | "not a git repo" on start                              | Run Aider inside a git repository; `git init` if needed                                                             |
 
-# Tips and further reading
+# Aider tips and further reading
 
 - [Aider usage tips](https://aider.chat/docs/usage/tips.html)
 - [Aider + Ollama connection docs](https://aider.chat/docs/llms/ollama.html)
@@ -402,6 +402,106 @@ Local models are weaker than frontier hosted models. These habits make them beha
 - [Chat modes](https://aider.chat/docs/usage/modes.html) and [in-chat commands](https://aider.chat/docs/usage/commands.html)
 - [Code editing leaderboard](https://aider.chat/docs/leaderboards/edit.html)
 - Community 2026 rankings of local coding models; informative, not independent proof: [Morph](https://www.morphllm.com/best-ollama-models), [Local AI Master](https://localaimaster.com/models/best-local-ai-coding-models), [haimaker.ai](https://haimaker.ai/blog/best-ollama-models-for-coding-agents/)
+
+# OpenCode + Ollama
+
+[OpenCode](https://opencode.ai/) is an open-source (MIT), model-agnostic AI coding agent for the terminal, built in TypeScript by Anomaly (the team formerly known as SST). Unlike a chat assistant it runs an agentic loop: it reads and edits files in your repository, runs shell commands (build, test, git), reads the results, and iterates until done or until it needs you. It also loads the right Language Server Protocol (LSP) servers for your project, so the agent gets real code intelligence (types, definitions, diagnostics) instead of guessing from raw text.
+
+Where Aider is surgical and human-steered (you drive, it executes) and Claude Code is tied to Anthropic models, OpenCode is an autonomous agent you can point at any model: hosted providers via API keys, or a fully local one. OpenCode is a harness, not a model, so results are dominated by the model you plug in. With a local model nothing leaves your machine, which matters for clinical, genomic, or unpublished data.
+
+Two built-in agents, toggled with **Tab**:
+
+| Agent   | Access                                         |
+| -       | -                                              |
+| `build` | Full access; can edit files and run commands   |
+| `plan`  | Read-only; analyse and explore before it edits |
+
+> **Note:** do not confuse this OpenCode (Anomaly, [github.com/anomalyco/opencode](https://github.com/anomalyco/opencode/), TypeScript) with Crush, the sibling Go project by Charm that continues the original codebase the two once shared. When reading third-party guides, check which one they mean.
+
+## Install OpenCode
+
+```console
+curl -fsSL https://opencode.ai/install | bash
+```
+
+`npm install -g opencode-ai` and `brew install anomalyco/tap/opencode` also work. Verify the install:
+
+```console
+opencode --version
+```
+
+## Connect to the Docker Ollama server
+
+Hosted providers are connected with `opencode auth login` (or `/connect` in the TUI), but a local Ollama server needs no key at all: Ollama exposes an OpenAI-compatible endpoint at `/v1`, and OpenCode reaches it through a JSON config file, either per project (`opencode.json` in the repo root) or global (`~/.config/opencode/opencode.json`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:11444/v1"
+      },
+      "models": {
+        "phi4:latest": { "name": "Phi-4" }
+      }
+    }
+  }
+}
+```
+
+- `baseURL` points at your `OLLAMA_PORT` (`11444` with this repo's `.env`; use `http://<host-ip>:11444/v1` from another machine, or `11434` for a native install).
+- `models` lists the Ollama models to expose in OpenCode; the keys must match the names shown by `ollama list`.
+
+> **Note:** OpenCode requires a context length of 64k or higher, much more than the `8192` this repo's `.env` ships for Aider. A small window silently cripples the agent: it "forgets" files it just read and tool calls degrade, with no error shown. Set `OLLAMA_CONTEXT_LENGTH=65536` in `.env` and apply with `docker compose up -d`; bigger windows use more memory, so budget accordingly.
+
+> **Note:** `phi4` (what the Docker setup pulls) is fine for light edits, but agentic coding stresses tool-calling reliability and edit discipline, exactly where smaller models wobble. For real work use a strong coding model such as `qwen2.5-coder:32b` (see [Choosing a local model](#choosing-a-local-model)) and add it to the `models` block.
+
+On a native install you can skip the JSON entirely: `ollama launch opencode` starts OpenCode preconfigured for a chosen local model. And if you want hosted Claude in OpenCode, use an Anthropic API key; Claude Pro/Max subscription login no longer works in third-party tools since Anthropic blocked it in 2026.
+
+## Usage
+
+Start OpenCode from your project directory:
+
+```console
+opencode
+```
+
+Run `/models` to pick the model, then work in the same rhythm as Aider's ask-then-code: explore and agree on a plan in the read-only `plan` agent, press Tab to switch to `build`, and let it edit. Unlike Aider, OpenCode does not auto-commit; review the diff and commit yourself, though `/undo` reverts the last message and its file changes.
+
+| Command     | What it does                                      |
+| -           | -                                                 |
+| `/models`   | List and switch models                            |
+| `/init`     | Guided setup that creates or updates `AGENTS.md`  |
+| `/undo`     | Undo the last message and revert its file changes |
+| `/redo`     | Redo a previously undone message                  |
+| `/compact`  | Summarise the session to cut context              |
+| `/sessions` | List and switch between sessions                  |
+| `/export`   | Export the conversation to Markdown               |
+| `/new`      | Start a new session                               |
+| `/help`     | Show the help dialog                              |
+| `/exit`     | Quit                                              |
+
+Run `/init` once per repository; it writes an `AGENTS.md` with project conventions that the agent reads every session, the equivalent of Claude Code's `CLAUDE.md`.
+
+OpenCode is built client/server: `opencode serve` runs the headless engine (default `127.0.0.1:4096`) that the TUI, desktop app, IDE extensions, and your own scripts can all drive.
+
+## Privacy notes
+
+The main draw of OpenCode with a local model is that nothing leaves your machine, but that is a property of the backend, not the client. To keep it that way:
+
+- **Use the local provider only.** Hosted providers receive your code under their own retention terms, and OpenCode Zen (the built-in curated model gateway, including its free models) routes prompts through OpenCode's own hosted infrastructure; it is not local and not zero-egress.
+- **Disable session sharing.** `/share` publishes the full conversation history to a public URL until you run `/unshare`. For sensitive work set `"share": "disabled"` in `opencode.json` rather than relying on remembering not to type it.
+
+## OpenCode further reading
+
+- [OpenCode docs](https://opencode.ai/docs/); the authoritative, fast-moving reference, so check it before trusting third-party guides
+- [Providers](https://opencode.ai/docs/providers/); current JSON syntax for local and custom OpenAI-compatible providers
+- [Ollama's OpenCode integration guide](https://docs.ollama.com/integrations/opencode); the canonical local-model recipe, including the 64k+ context requirement
+- [OpenCode on GitHub](https://github.com/anomalyco/opencode/); source, issues, and release notes, where breaking changes show up first
+- [Crush](https://github.com/charmbracelet/crush); the sibling Go project, a strong alternative if you prefer a Charm-styled TUI
 
 # llm + Ollama
 
