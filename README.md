@@ -177,6 +177,8 @@ source ./venv/bin/activate
 
 # Install Aider
 
+[Aider](https://aider.chat/) is a terminal-based AI pair programmer: you add files to a chat, describe a change, and it edits the files and commits the result. It needs Python 3.8+ and git, and it must be run inside a git repository; Aider auto-commits every edit, so git history is your undo log.
+
 After activating the virtual environment, [install](https://aider.chat/#getting-started) using:
 
 ```console
@@ -184,19 +186,47 @@ python -m pip install aider-install
 aider-install
 ```
 
-This will install to `${HOME}/.local/bin`.
-
-# Aider  + Ollama
-
-[Aider](https://aider.chat/docs/llms/ollama.html) can connect to local Ollama models; port 11434 is the default.
+This will install to `${HOME}/.local/bin`. Verify the install:
 
 ```console
+aider --version
+```
+
+> **Note:** `pipx install aider-chat` and `uv tool install --python python3.12 aider-chat` also work, but the `aider-install` route is the least fuss. Do not run bare `aider` until a model is configured (see below); without one it looks for a hosted-model API key and complains.
+
+# Choosing a local model
+
+Model quality is the single biggest lever on how usable a local coding assistant feels. A weak model produces broken diffs, forgets to finish edits, and ignores your abstractions; pick the strongest model your hardware can hold. As a rough rule of thumb for a quantised (Q4) model, budget a bit more memory than the download size: a 20 GB model wants around 24 GB of RAM or VRAM to run comfortably.
+
+| Hardware (RAM/VRAM) | Suggested model       | `ollama pull` tag   | Notes                                                        |
+| -                   | -                     | -                   | -                                                            |
+| 24 GB+              | Qwen2.5-Coder 32B     | `qwen2.5-coder:32b` | Very strong general coding model; a proven default for Aider |
+| 24 GB+              | Qwen3-Coder 30B (MoE) | `qwen3-coder:30b`   | Newer MoE model with a large context window                  |
+| 16-24 GB            | Devstral Small 24B    | `devstral:24b`      | Purpose-built for agentic coding (multi-file edits)          |
+| ~16 GB              | gpt-oss 20B           | `gpt-oss:20b`       | Good fit for tighter memory budgets                          |
+| < 16 GB             | Qwen2.5-Coder 7B/14B  | `qwen2.5-coder:7b`  | Usable for small, surgical edits; expect more hand-holding   |
+
+If you have the RAM, start with `qwen2.5-coder:32b` or `qwen3-coder:30b`; they are the most reliable inside Aider. For heavier multi-file work try `devstral:24b`. Prefer models tagged `-coder` or `-instruct`, which follow editing instructions better than base models.
+
+> **Note:** the table reflects widely cited 2026 community rankings (linked under [Tips and further reading](#tips-and-further-reading)). Like Aider's own [leaderboard](https://aider.chat/docs/leaderboards/edit.html), rankings are informative but not proof of fitness for *your* codebase; try a model and watch the diffs.
+
+# Aider + Ollama
+
+[Aider](https://aider.chat/docs/llms/ollama.html) can connect to local Ollama models: no API key, no per-token bill, and no code leaving your machine. The trade-off is that local models are weaker than frontier hosted models and need some tuning to behave well (see [Tuning Aider for local models](#tuning-aider-for-local-models)).
+
+Two things make the connection: an environment variable telling Aider where the Ollama server is (port 11434 is the default for a native install), and a model name with the `ollama_chat/` prefix (see [Run Aider](#run-aider)).
+
+```bash
 export OLLAMA_API_BASE=http://127.0.0.1:11434
 ```
 
 > **Note:** if you are running Ollama with [Docker](#docker), point `OLLAMA_API_BASE` at your `OLLAMA_PORT` (`http://127.0.0.1:11444` with this repo's `.env`), set `OLLAMA_CONTEXT_LENGTH` in `.env` instead of editing the systemd service, and skip the `systemctl` steps below.
 
-Stop service.
+## The context-window gotcha
+
+This is the mistake that makes people give up on local Aider. Ollama defaults to a 2,048-token context window, which is tiny; worse, when a request exceeds the window Ollama does not error, it silently truncates the context. The model simply stops seeing part of your files or instructions, and you get baffling, half-finished edits with no warning. Set at least `8192`; go higher if your model and RAM allow.
+
+The Docker setup already handles this via `OLLAMA_CONTEXT_LENGTH` in `.env`. For a native install, set it on the systemd service. Stop service.
 
 ```console
 sudo systemctl stop ollama
@@ -217,6 +247,19 @@ Start service.
 ```console
 sudo systemctl start ollama
 ```
+
+Alternatively, set the context window per model in `.aider.model.settings.yml`. Aider looks for this file in your home directory, the git repo root, and the current directory, in that order (later files win):
+
+```yaml
+# .aider.model.settings.yml
+- name: ollama_chat/phi4:latest
+  extra_params:
+    num_ctx: 8192
+```
+
+The `name:` must exactly match the model string passed to `--model`, prefix included, or the setting is silently ignored. `extra_params` is passed straight through to the model call, so `num_ctx` sets Ollama's context window; bigger values use more memory. Use `- name: aider/extra_params` to apply settings to every model at once.
+
+## Run Aider
 
 Pull a model.
 
@@ -241,7 +284,7 @@ Exit after checking.
 >>> /exit
 ```
 
-Start `aider`.
+Start `aider` from inside a git repository.
 
 ```console
 aider --model ollama_chat/phi4:latest
@@ -249,22 +292,116 @@ aider --model ollama_chat/phi4:latest
 
 Type `/exit` to quit.
 
-# Aider commands
+> **Note:** use the `ollama_chat/` prefix, not `ollama/`. Aider's docs recommend it; it uses Ollama's chat endpoint and produces noticeably better results. Whichever prefix you choose, use it consistently, including in `.aider.model.settings.yml`.
 
-| Command         | What It Does            |
-| -               | -                       |
-| `/add` filename | Add a file to the chat/ |
-| `drop` filename | Remove a file from chat |
-| `/ls`           | List files in chat      |
-| `/run` command  | Run a shell command     |
-| `/undo`         | Undo last change        |
-| `/diff`         | Show changes made       |
-| `/clear`        | Clear chat history      |
-| `/exit`         | Exit aider              |
+# Persisting Aider settings
 
-# Tips
+Typing `--model` and exporting variables every session gets old. Add the export to your shell profile (`~/.bashrc`, `~/.zshrc`), or put it in a `.env` file in your project; Aider reads `.env` automatically.
 
-See [Tips](https://aider.chat/docs/usage/tips.html).
+```
+# .env
+OLLAMA_API_BASE=http://127.0.0.1:11444
+```
+
+> **Note:** in this repository, `.env` is also read by Docker Compose for the [Docker](#docker) setup; the two uses coexist fine, as each tool ignores variables it does not know.
+
+Set the default model (and other options) in `.aider.conf.yml`, searched for in the same places as the model settings file:
+
+```yaml
+# .aider.conf.yml
+model: ollama_chat/phi4:latest
+
+# Optional:
+# auto-commits: true   # git history is your undo log (default true)
+# map-tokens: 1024     # size of the repo map (default ~1k)
+# dark-mode: true
+```
+
+With this in place, a bare `aider` just works. Three files, three jobs: `.env` holds environment variables, `.aider.conf.yml` holds Aider options (which model, which flags), and `.aider.model.settings.yml` holds low-level per-model parameters like `num_ctx`.
+
+# Aider workflow and commands
+
+Aider is a pair programmer you steer one change at a time, not an autopilot. The loop: add the right files, agree on an approach, let it edit, review the auto-commit, repeat.
+
+Managing context is the highest-leverage habit. Aider builds a repo map (a compact, tree-sitter-derived summary of the whole codebase) so the model understands structure cheaply, but the map is a heuristic; you still usually need to `/add` the specific files a change touches.
+
+| Command      | What it does                                              |
+| -            | -                                                         |
+| `/add` file  | Put a file in the editable context                        |
+| `/drop` file | Remove a file from context (do this often to save tokens) |
+| `/ls`        | List files currently in context                           |
+| `/tokens`    | Show how many tokens the current context is using         |
+
+Aider has several [chat modes](https://aider.chat/docs/usage/modes.html):
+
+| Command      | Mode           | Use it for                                       |
+| -            | -              | -                                                |
+| `/ask`       | Ask            | Discuss and plan; never edits files              |
+| `/code`      | Code (default) | Make the edit                                    |
+| `/architect` | Architect      | A reasoning model plans, an editor model applies |
+| `/help`      | Help           | Questions about Aider itself                     |
+
+The recommended rhythm is ask-then-code: strategise in `/ask` until you agree on the plan, then switch to `/code` and say "go ahead". This matters even more with local models, which plan better than they one-shot.
+
+Git and running things:
+
+| Command     | What it does                                                 |
+| -           | -                                                            |
+| `/undo`     | Revert Aider's last commit                                   |
+| `/diff`     | Show what changed since the last message                     |
+| `/commit`   | Commit pending changes with a generated message              |
+| `/run` cmd  | Run a shell command and feed its output back to the model    |
+| `/test` cmd | Run the test suite; on failure Aider can try to self-correct |
+| `/lint`     | Run the linter and offer to fix issues                       |
+| `/clear`    | Clear the chat history to start fresh and cut tokens         |
+| `/exit`     | Quit (Ctrl-D also works)                                     |
+
+A typical session:
+
+```text
+> /add src/parser.py
+> /ask how should I add support for gzipped input?
+  ... discuss the approach ...
+> /code go ahead and implement that
+  ... Aider edits, auto-commits ...
+> /test pytest -q
+  ... on failure, Aider proposes a fix ...
+> /undo        # if you don't like the result
+```
+
+# Tuning Aider for local models
+
+Local models are weaker than frontier hosted models. These habits make them behave:
+
+- **Keep context small.** Local models degrade fast as context grows; `/add` only the files a change touches, `/drop` the rest, and `/clear` between unrelated tasks.
+- **Always ask-then-code.** A local model that has agreed on a plan edits far more reliably than one asked to plan and edit in a single shot.
+- **Watch the context window.** Silent truncation (see [the context-window gotcha](#the-context-window-gotcha)) is the number-one cause of weird local-model behaviour.
+- **Let Aider pick the edit format.** Aider auto-selects the diff format it has benchmarked as most reliable for each model; do not override it unless you know why. If a small model produces broken diffs, the model may simply be too weak; step up a size.
+- **Tune the repo map if needed.** `--map-tokens 1024` is the default; on a big repo you can raise it for more structural context, but that costs tokens the local model then has to process.
+
+> **Note:** even well-tuned, a 30B local model will not match hosted frontier models on hard, open-ended tasks. Local Aider shines on surgical, well-scoped, privacy-sensitive, or offline edits.
+
+# Troubleshooting
+
+| Symptom                                                | Likely cause and fix                                                                                                |
+| -                                                      | -                                                                                                                   |
+| Connection refused / can't reach the model             | Ollama isn't running, or wrong URL; check `docker compose ps` (or the systemd service) and `OLLAMA_API_BASE`        |
+| Vague or truncated answers that ignore parts of a file | Context window too small; raise `OLLAMA_CONTEXT_LENGTH` / `num_ctx`, or `/drop` unneeded files                      |
+| "model not found"                                      | Model not pulled or wrong tag; `ollama list` shows the exact names, which must match the `--model` string after the prefix |
+| Broken or unapplied diffs                              | Model too weak for the edit format; try a larger model and confirm the `ollama_chat/` prefix                        |
+| `num_ctx` in the settings file seems ignored           | The `name:` must exactly match your `--model` string, prefix included                                               |
+| Very slow responses                                    | Model larger than your RAM/VRAM comfortably holds, so it is swapping; pick a smaller model and check `ollama ps`    |
+| "not a git repo" on start                              | Run Aider inside a git repository; `git init` if needed                                                             |
+
+# Tips and further reading
+
+- [Aider usage tips](https://aider.chat/docs/usage/tips.html)
+- [Aider + Ollama connection docs](https://aider.chat/docs/llms/ollama.html)
+- [Advanced model settings](https://aider.chat/docs/config/adv-model-settings.html) (`.aider.model.settings.yml`, `extra_params`, `num_ctx`)
+- [Configuration with `.aider.conf.yml`](https://aider.chat/docs/config/aider_conf.html)
+- [Chat modes](https://aider.chat/docs/usage/modes.html) and [in-chat commands](https://aider.chat/docs/usage/commands.html)
+- [Code editing leaderboard](https://aider.chat/docs/leaderboards/edit.html)
+- Community 2026 rankings of local coding models; informative, not independent proof: [Morph](https://www.morphllm.com/best-ollama-models), [Local AI Master](https://localaimaster.com/models/best-local-ai-coding-models), [haimaker.ai](https://haimaker.ai/blog/best-ollama-models-for-coding-agents/)
 
 # llm + Ollama
 
