@@ -265,3 +265,88 @@ Type `/exit` to quit.
 # Tips
 
 See [Tips](https://aider.chat/docs/usage/tips.html).
+
+# llm + Ollama
+
+[llm](https://llm.datasette.io/) is a command-line tool and Python library by [Simon Willison](https://simonwillison.net/) for interacting with large language models. Out of the box it talks to hosted APIs (OpenAI, Anthropic, Gemini, and others, which require API keys), and plugins add support for local models. Every prompt and response is logged to a local SQLite database, which makes it easy to search past conversations and compare models. This section sets it up against the [Docker](#docker) Ollama server.
+
+## Install
+
+After activating the [virtual environment](#create-python-virtual-environment):
+
+```console
+python -m pip install llm
+```
+
+(If you prefer an isolated install outside the venv: `pipx install llm`, `uv tool install llm`, or `brew install llm`.)
+
+Ollama support comes from the [llm-ollama](https://github.com/taketwo/llm-ollama) plugin. Install it with `llm install` rather than plain `pip install`, so it lands in the same environment as `llm` itself:
+
+```console
+llm install llm-ollama
+llm plugins   # confirm it is listed
+```
+
+## Connect to the Docker Ollama server
+
+The plugin discovers models by querying an Ollama server, and like the `ollama` CLI it honours the `OLLAMA_HOST` environment variable. The Docker setup publishes the API on `OLLAMA_PORT` (`11444` in this repo's `.env`), so point `llm` there:
+
+```bash
+export OLLAMA_HOST=http://127.0.0.1:11444
+
+# or from another machine on the network
+export OLLAMA_HOST=http://<host-ip>:11444
+```
+
+No API key is needed; the Ollama API is unauthenticated (see the note in [Access from other computers](#access-from-other-computers)).
+
+Verify that the Ollama models show up:
+
+```console
+llm models
+```
+
+Ollama models are listed with an `Ollama: ` prefix, e.g. `Ollama: phi4:latest`. Only models the server has already downloaded appear; the Docker setup pulls `phi4` automatically via `OLLAMA_PULL_MODELS`, and you can add more with `docker compose exec ollama ollama pull <model>`.
+
+## Usage
+
+Run a one-off prompt:
+
+```console
+llm -m phi4:latest 'Ten fun names for a pet pelican'
+```
+
+Start an interactive chat:
+
+```console
+llm chat -m phi4:latest
+```
+
+Pipe in files or command output, with `-s` setting a system prompt:
+
+```console
+cat entrypoint.sh | llm -m phi4:latest -s 'Explain this shell script'
+```
+
+Set a default model (so `-m` can be dropped) or a shorter alias:
+
+```console
+llm models default phi4:latest
+llm aliases set phi phi4:latest   # then: llm -m phi 'hello'
+```
+
+Model options are passed with `-o`; for example a lower temperature, or a larger context window than the server default (`OLLAMA_CONTEXT_LENGTH` in `.env`):
+
+```console
+llm -m phi4:latest -o temperature 0.2 -o num_ctx 16384 'Summarise this...'
+llm models --options   # list the options each model supports
+```
+
+Everything is logged to SQLite; browse or locate the database with:
+
+```console
+llm logs        # recent prompts and responses
+llm logs path   # location of the database file
+```
+
+The plugin also supports [embeddings](https://llm.datasette.io/en/stable/embeddings/index.html) with Ollama embedding models (e.g. `mxbai-embed-large`) via `llm embed`.
