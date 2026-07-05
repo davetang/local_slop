@@ -1,0 +1,3 @@
+# Keep the build context tiny; only entrypoint.sh needs to be sent.
+*
+!entrypoint.sh

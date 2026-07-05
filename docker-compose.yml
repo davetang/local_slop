@@ -1,0 +1,38 @@
+services:
+  ollama:
+    build: .
+    image: ollama-server:latest
+    container_name: ollama
+    # Publish the API port on the host so other machines on the LAN can
+    # reach it at http://<host-ip>:${OLLAMA_PORT}
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    # Persist models and Ollama state on the host so they survive
+    # container restarts/rebuilds and are never re-downloaded.
+    volumes:
+      - "${OLLAMA_DATA:-./ollama_data}:/root/.ollama"
+    environment:
+      # Listen on all interfaces inside the container.
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-8192}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-5m}
+      # Space/comma separated list of models to pull on start (optional).
+      - OLLAMA_PULL_MODELS=${OLLAMA_PULL_MODELS:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # --- NVIDIA GPU support (optional) --------------------------------
+    # Requires the NVIDIA driver and the NVIDIA Container Toolkit on the
+    # host. Uncomment to give the container access to all GPUs.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
