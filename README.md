@@ -1,3 +1,35 @@
+# Contents
+
+- [Ollama](#ollama)
+  - [Server](#server)
+- [Docker](#docker)
+  - [Requirements](#requirements)
+  - [Usage](#usage)
+  - [Configuration](#configuration)
+  - [Access from other computers](#access-from-other-computers)
+- [Claude Code](#claude-code)
+- [Create Python virtual environment](#create-python-virtual-environment)
+- [Install Aider](#install-aider)
+- [Choosing a local model](#choosing-a-local-model)
+- [Aider + Ollama](#aider--ollama)
+  - [The context-window gotcha](#the-context-window-gotcha)
+  - [Run Aider](#run-aider)
+- [Persisting Aider settings](#persisting-aider-settings)
+- [Aider workflow and commands](#aider-workflow-and-commands)
+- [Tuning Aider for local models](#tuning-aider-for-local-models)
+- [Aider troubleshooting](#aider-troubleshooting)
+- [Aider tips and further reading](#aider-tips-and-further-reading)
+- [OpenCode + Ollama](#opencode--ollama)
+  - [Install OpenCode](#install-opencode)
+  - [Connect to the Docker Ollama server](#connect-to-the-docker-ollama-server)
+  - [Usage](#usage-1)
+  - [Privacy notes](#privacy-notes)
+  - [OpenCode further reading](#opencode-further-reading)
+- [llm + Ollama](#llm--ollama)
+  - [Install](#install)
+  - [Connect to the Docker Ollama server](#connect-to-the-docker-ollama-server-1)
+  - [Usage](#usage-2)
+
 # Ollama
 
 To run LLMs locally you can use [Ollama](https://ollama.com/download); installing and updating use the same command:
