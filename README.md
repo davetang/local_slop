@@ -2,6 +2,7 @@
 
 - [Ollama](#ollama)
   - [Server](#server)
+  - [Client on another machine](#client-on-another-machine)
 - [Docker](#docker)
   - [Requirements](#requirements)
   - [Usage](#usage)
@@ -63,7 +64,51 @@ sudo systemctl restart ollama
 ss -tlnp | grep 11434
 ```
 
-To use another instance of Ollama running on the network.
+## Client on another machine
+
+Everything above sets up the machine that *serves* models. To drive that server from a second machine on the network you do not need a second Ollama server; you only need the `ollama` binary, which is an HTTP client for every subcommand except `serve`.
+
+`OLLAMA_HOST` is overloaded and means two different things depending on which side reads it:
+
+| Where it is read            | What it means          | Example                     |
+| -                           | -                      | -                           |
+| Server (`ollama serve`)     | Address to **bind** to | `0.0.0.0:11434`             |
+| Client (`run`, `list`, ...) | Server to **talk to**  | `http://192.168.1.50:11434` |
+
+### Install the client only
+
+`install.sh` also creates and enables a systemd service, so the client machine would end up running an idle server it never uses. To install just the binary, pull it out of the release archive.
+
+Releases now ship as zstd-compressed tarballs (the older `.tgz` assets no longer exist, so URLs ending in `.tgz` return 404). `bin/ollama` is the first member of the archive, so `tar --occurrence=1` extracts it and then exits, which aborts the download before any of the ~1.4 GB of GPU runners and support libraries transfer. In practice this fetches about 11 MB.
+
+```console
+sudo apt install zstd
+
+cd "$(mktemp -d)"
+curl -sL https://ollama.com/download/ollama-linux-amd64.tar.zst \
+  | zstd -d \
+  | tar -x --occurrence=1 bin/ollama
+
+sudo install -m 755 bin/ollama /usr/local/bin/ollama
+```
+
+The result is a single 39 MB binary that needs nothing beyond the system C and C++ libraries: no service, no `ollama` user, and no `lib/ollama/` runner directory to clean up later. Re-running the same commands is the whole upgrade procedure.
+
+Swap `amd64` for `arm64` on an ARM machine. To pin a version, append `?version=` to the URL, giving the number *without* a leading `v` (`?version=v0.32.0` redirects to a `vv0.32.0` path and 404s):
+
+```console
+curl -sL 'https://ollama.com/download/ollama-linux-amd64.tar.zst?version=0.32.0' | ...
+```
+
+`--occurrence` is GNU tar. On macOS the equivalent is `-q` (`--fast-read`), and the macOS asset is still a `.tgz` with a flat layout:
+
+```console
+curl -sL https://ollama.com/download/ollama-darwin.tgz | tar -xzq ollama
+```
+
+### Point it at the server
+
+The CLI has no `--host` flag, so `OLLAMA_HOST` is the only way to redirect it. A full URL and a bare `host:port` both work:
 
 ```bash
 export OLLAMA_HOST=http://192.168.1.50:11434
@@ -71,6 +116,27 @@ export OLLAMA_HOST=http://192.168.1.50:11434
 # when you're done
 unset OLLAMA_HOST
 ```
+
+Persist it in `~/.bashrc` if the machine always talks to the same server. Use whatever port the server publishes: `11434` for the systemd install above, or your `OLLAMA_PORT` (`11444` in this repo) for the Docker setup, see [Access from other computers](#access-from-other-computers).
+
+```console
+ollama list             # lists the server's models
+ollama run llama3.1
+```
+
+If that fails, test the network path directly before suspecting the client:
+
+```console
+curl -s http://192.168.1.50:11434/api/tags
+```
+
+### Things to watch
+
+- `ollama pull` downloads to the **server's** disk, not the client's; the client only sends the request. `ollama rm` likewise deletes from the server. Every management subcommand acts on the remote machine even though the prompt looks local.
+- `ollama ps` shows what is loaded on the server, so the server's `OLLAMA_KEEP_ALIVE` governs what you see.
+- Do not run `ollama serve` on the client. The bare binary starts a server and binds the port quite happily, but without `lib/ollama/` it has no inference runners and only fails once a model is actually requested.
+- `ollama --version` reports the client and server versions and warns when they differ, so re-run the install command after upgrading the server.
+- The API is unauthenticated and unencrypted. Keep it on a trusted LAN and firewall the port (`sudo ufw allow from 192.168.1.0/24 to any port 11434 proto tcp`), or bind the server to one interface (`Environment="OLLAMA_HOST=192.168.1.50:11434"` in the systemd drop-in above) instead of `0.0.0.0`.
 
 # Docker
 
