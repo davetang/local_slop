@@ -18,6 +18,8 @@
   - [Writing and small chores](#writing-and-small-chores)
   - [Multilingual work](#multilingual-work)
   - [Through the llm CLI](#through-the-llm-cli)
+    - [In-process, with llm-mlx](#in-process-with-llm-mlx)
+    - [Server mode](#server-mode)
   - [What to skip](#what-to-skip)
 - [Gotchas](#gotchas)
   - [The 100-token default](#the-100-token-default)
@@ -223,7 +225,11 @@ This is Apertus's real differentiator at this size. It is strong across German, 
 
 ## Through the llm CLI
 
-The [`llm-mlx`](https://github.com/simonw/llm-mlx) plugin puts MLX models in the same CLI as the Ollama models, with the same SQLite logging described in the README:
+MLX models can sit in the same `llm` install as the Ollama models, sharing the SQLite logging described in the README, so `llm models` lists both backends and `llm logs` covers everything. There are two ways to wire it up.
+
+### In-process, with llm-mlx
+
+The [`llm-mlx`](https://github.com/simonw/llm-mlx) plugin runs MLX inside the `llm` process — no server, no port:
 
 ```console
 llm install llm-mlx
@@ -232,7 +238,52 @@ llm -m tokimoa/apertus-v1.5-8b-mlx-4bit 'Ten fun names for a pet pelican'
 llm logs
 ```
 
-This runs MLX in-process rather than talking to `mlx_lm.server`, so there is no server to start and no port to manage.
+The catch is that every `llm` invocation is a fresh process, so the weights are reloaded from disk each time. For an occasional one-off that is fine; for anything repeated it dominates the runtime.
+
+### Server mode
+
+Pointing `llm` at a running `mlx_lm.server` keeps the model resident between calls, which is the main reason to prefer it.
+
+Start the server:
+
+```console
+python -m mlx_lm.server --model tokimoa/apertus-v1.5-8b-mlx-8bit --max-tokens 2048
+```
+
+Find the `llm` configuration directory — on macOS this is `~/Library/Application Support/io.datasette.llm`:
+
+```console
+dirname "$(llm logs path)"
+```
+
+Create `extra-openai-models.yaml` in that directory:
+
+```yaml
+- model_id: apertus-mlx
+  model_name: tokimoa/apertus-v1.5-8b-mlx-8bit
+  api_base: http://127.0.0.1:8080/v1
+  aliases:
+    - apertus
+```
+
+`model_id` is what you type after `-m`. `model_name` is what `llm` sends in the request body, so it has to be something the server can load — a Hugging Face repo id, or the literal `default_model` to always use whatever the server was started with. The `api_base` must include the `/v1` suffix.
+
+No API key is required. In `llm`'s OpenAI plugin, setting `api_base` also sets `needs_key = None`, a deliberate safety property so that a configured OpenAI key is never sent to a local or third-party endpoint. There is no need to invent a dummy key.
+
+Check that it registered, then use it like any other model:
+
+```console
+llm models | grep -i apertus
+llm -m apertus 'Write an R script that will generate 50 random whole numbers'
+llm chat -m apertus
+llm logs
+```
+
+Three things to watch:
+
+- **`max_tokens` defaults to 512** on the server, rather than the 100 that `mlx_lm generate` uses. Deliberation blocks still eat into it, so raise it per call with `-o max_tokens 2048` or start the server with a higher `--max-tokens`. See [The 100-token default](#the-100-token-default).
+- **Registering several MLX models and alternating between them is slow.** The server keeps one model resident, so each switch re-reads the full weights — see [How it compares with Ollama](#how-it-compares-with-ollama).
+- **Streaming works by default.** Add `can_stream: false` to the YAML only if something downstream cannot cope.
 
 ## What to skip
 
