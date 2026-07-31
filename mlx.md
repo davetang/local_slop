@@ -9,6 +9,16 @@
   - [Generate](#generate)
   - [Chat](#chat)
   - [Server](#server)
+    - [How it compares with Ollama](#how-it-compares-with-ollama)
+- [Use cases](#use-cases)
+  - [Bulk processing](#bulk-processing)
+  - [Data that cannot leave the machine](#data-that-cannot-leave-the-machine)
+  - [Offline work](#offline-work)
+  - [Reproducible research](#reproducible-research)
+  - [Writing and small chores](#writing-and-small-chores)
+  - [Multilingual work](#multilingual-work)
+  - [Through the llm CLI](#through-the-llm-cli)
+  - [What to skip](#what-to-skip)
 - [Gotchas](#gotchas)
   - [The 100-token default](#the-100-token-default)
   - [Deliberation blocks](#deliberation-blocks)
@@ -113,7 +123,123 @@ python -m mlx_lm chat --model tokimoa/apertus-v1.5-8b-mlx-8bit
 python -m mlx_lm.server --model tokimoa/apertus-v1.5-8b-mlx-8bit
 ```
 
-This is the same shape of endpoint that Aider, OpenCode and `llm` already speak, so a Mac running `mlx_lm.server` slots in wherever those tools currently expect an OpenAI base URL. It is *not* the Ollama API, so `ollama list`, `ollama run` and the `llm-ollama` plugin will not see it — configure it as an OpenAI-compatible provider instead.
+It binds to `127.0.0.1:8080` by default; `--host` and `--port` change that, and `--host 0.0.0.0` exposes it to the LAN. Four endpoints are served:
+
+| Endpoint               | Method | Purpose                                        |
+| -                      | -      | -                                              |
+| `/v1/chat/completions` | POST   | Chat completions, streaming or not             |
+| `/v1/completions`      | POST   | Raw text completions                           |
+| `/v1/models`           | GET    | Lists MLX models found in the Hugging Face cache |
+| `/health`              | GET    | Liveness check                                 |
+
+`--model` is optional. It only defines what the alias `default_model` resolves to, so a request that names no model still works:
+
+```console
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"messages": [{"role": "user", "content": "Hello"}], "max_tokens": 512}'
+```
+
+Naming a model in the request body switches to it, downloading it first if it is not already cached:
+
+```console
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model": "tokimoa/apertus-v1.5-8b-mlx-4bit",
+       "messages": [{"role": "user", "content": "Hello"}], "max_tokens": 512}'
+```
+
+Aider, OpenCode and `llm` all speak this API, so a Mac running `mlx_lm.server` slots in wherever those tools expect an OpenAI base URL. Note that the server's flag for chat template arguments is `--chat-template-args`, not the `--chat-template-config` that `mlx_lm generate` uses.
+
+### How it compares with Ollama
+
+The mental model is much the same: one long-lived process, models loaded on demand, chosen by name per request. The differences are in the protocol and in what stays resident.
+
+|                        | Ollama                                     | `mlx_lm.server`                            |
+| -                      | -                                          | -                                          |
+| Protocol               | native `/api/*` **plus** an OpenAI `/v1/*` shim | OpenAI `/v1/*` only                   |
+| Default address        | `127.0.0.1:11434`                          | `127.0.0.1:8080`                           |
+| List models            | `ollama list`, `GET /api/tags`             | `GET /v1/models`                           |
+| Where models come from | `~/.ollama`, populated by `ollama pull`    | the Hugging Face cache, populated on first use |
+| Choose model per request | yes                                      | yes                                        |
+| Models resident at once | several                                   | **one** — switching evicts the previous     |
+| Idle unload            | yes, via `OLLAMA_KEEP_ALIVE`               | none; the model stays loaded until swapped or the process exits |
+| Pull a model ahead of time | `ollama pull`                          | `huggingface-cli download <repo>`, or just make one request |
+| Authentication         | none                                       | none (`--allowed-origins` controls CORS only) |
+
+Three consequences worth planning around:
+
+- **`ollama` CLI commands will not work against it.** `ollama list`, `ollama run` and the `llm-ollama` plugin all speak the native API, which `mlx_lm.server` does not implement. Configure it as an OpenAI-compatible provider instead, or use [`llm-mlx`](#through-the-llm-cli).
+- **Alternating between two models is expensive.** Ollama can keep several resident and switch cheaply; `mlx_lm.server` reloads from disk on every switch, which for an 8-bit 8B means re-reading roughly 8.5 GB. Group work by model rather than interleaving.
+- **The model never unloads on its own.** There is no keep-alive timer, so the RAM stays occupied until you stop the server. On a laptop that is usually what you want during a work session and not what you want left running.
+
+Neither exposes any authentication, so the note in the README's [Access from other computers](README.md#access-from-other-computers) applies here too: keep it on localhost or a trusted network.
+
+# Use cases
+
+An 8B model on a laptop is not a smaller frontier model. It is weak at multi-step reasoning and knows little about anything recent, but it is free per token, private, and always available. The uses that pay off follow from those three properties rather than from raw capability.
+
+## Bulk processing
+
+The best fit for a local model. Anything repetitive across hundreds of items — classifying, tagging, summarising, extracting structured fields from free text, normalising messy metadata — is where a hosted API gets expensive and rate-limited, and where an 8B is usually good enough because each individual task is small and tightly constrained.
+
+The important detail is to **load the model once**. Every `python -m mlx_lm generate` invocation re-reads the full weights from disk, so a shell loop over a thousand items spends most of its time loading:
+
+```python
+from mlx_lm import load, generate
+
+model, tokenizer = load("tokimoa/apertus-v1.5-8b-mlx-4bit")
+
+for item in items:
+    prompt = tokenizer.apply_chat_template(
+        [{"role": "user", "content": f"...{item}..."}],
+        add_generation_prompt=True,
+        tokenize=False,
+    )
+    print(generate(model, tokenizer, prompt=prompt, max_tokens=512))
+```
+
+Alternatively run `mlx_lm.server` and drive it over HTTP from R or Python, which keeps the model resident across separate scripts.
+
+## Data that cannot leave the machine
+
+Unpublished results, anything under a data access agreement, draft grant text, material with identifiers in it. Here the usual objection that a small model is weaker does not apply, because the alternative is not a better model — it is doing the work by hand.
+
+## Offline work
+
+A Dockerised Ollama server on the LAN is unreachable the moment the laptop leaves the network. MLX is the same capability that still works on a train.
+
+## Reproducible research
+
+Apertus is fully open: Apache 2.0 weights, published training data, and a Hugging Face revision you can pin. If a step in an analysis involves a language model, you can state exactly which model touched the data and someone can rerun it years later. A methods section citing a hosted endpoint that has since been retired cannot offer that.
+
+## Writing and small chores
+
+Restating an explanation more simply, generating variants of an exercise, first-pass alt text, commit messages from a diff, regex, `awk` and `jq` one-liners, roxygen comments for an R function. Outputs are short, so even a modest tokens/sec rate is no obstacle, and the output gets edited anyway.
+
+## Multilingual work
+
+This is Apertus's real differentiator at this size. It is strong across German, French, Italian and English, where most 8B models are not.
+
+## Through the llm CLI
+
+The [`llm-mlx`](https://github.com/simonw/llm-mlx) plugin puts MLX models in the same CLI as the Ollama models, with the same SQLite logging described in the README:
+
+```console
+llm install llm-mlx
+llm mlx download-model tokimoa/apertus-v1.5-8b-mlx-4bit
+llm -m tokimoa/apertus-v1.5-8b-mlx-4bit 'Ten fun names for a pet pelican'
+llm logs
+```
+
+This runs MLX in-process rather than talking to `mlx_lm.server`, so there is no server to start and no port to manage.
+
+## What to skip
+
+- **Agentic coding.** An 8B does not hold a multi-file edit plan together; Aider and OpenCode will churn. Single-file edits are fine, autonomous work is not.
+- **Questions about current facts or library APIs.** It will answer confidently and be wrong.
+- **The full 262K context.** The number is real, but the KV cache exhausts unified memory long before you approach it. See [Memory pressure](#memory-pressure).
+- **Anything costly to get wrong that you will not check.** The right jobs are ones where verification is cheap, or where the output is explicitly a draft.
 
 # Gotchas
 
