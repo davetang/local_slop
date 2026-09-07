@@ -8,6 +8,11 @@
   - [Usage](#usage)
   - [Configuration](#configuration)
   - [Access from other computers](#access-from-other-computers)
+- [Custom models with a Modelfile](#custom-models-with-a-modelfile)
+  - [Build and run](#build-and-run)
+  - [Modelfile instructions](#modelfile-instructions)
+  - [With the Docker server](#with-the-docker-server)
+  - [When a Modelfile is overkill](#when-a-modelfile-is-overkill)
 - [Web interface](#web-interface)
   - [Open WebUI](#open-webui)
   - [Browser-only clients and CORS](#browser-only-clients-and-cors)
@@ -254,6 +259,101 @@ export OLLAMA_API_BASE=http://<host-ip>:<port>
 ```
 
 > **Note:** publishing the port exposes an unauthenticated API to your network. Only do this on a trusted LAN, and add a firewall rule (or bind the port to a specific interface) if needed.
+
+# Custom models with a Modelfile
+
+A **Modelfile** is a short text file that layers a system prompt and parameters on top of an existing model; `ollama create` then turns it into a new model with its own name. This is not fine-tuning: there is no training, no GPU time, and almost no extra disk use, because the new model shares the base model's weights. It is the cheapest way to point a small model at one specific job.
+
+The `cmd-explain.Modelfile` in this repository is the example used below:
+
+```
+FROM qwen2.5-coder:7b
+
+SYSTEM """
+You convert shell commands into a one-line explanation.
+Reply with the explanation only. No preamble, no code blocks.
+"""
+
+PARAMETER temperature 0.1
+PARAMETER num_ctx 8192
+```
+
+## Build and run
+
+The base model must already exist on the server (`ollama list` shows what is there):
+
+```console
+ollama pull qwen2.5-coder:7b
+ollama create cmd-explain -f cmd-explain.Modelfile
+```
+
+The model's name is the `create` argument, not the filename: `-f` accepts any path, and defaults to `./Modelfile` when omitted. Naming a file after the model it builds keeps things straight once you have several; the conventional bare `Modelfile` only buys you the shortcut of dropping the flag.
+
+The new model then behaves like any other:
+
+```console
+ollama list                                            # cmd-explain:latest is now listed
+ollama run cmd-explain 'tar -x --occurrence=1 bin/ollama'
+```
+
+That name works everywhere a model name is accepted: `llm -m cmd-explain`, `ollama_chat/cmd-explain` in Aider, and the `models` block of `opencode.json`.
+
+Re-running `ollama create` with the same name replaces the model, so editing the Modelfile and rebuilding is the whole iteration loop; `ollama rm cmd-explain` removes it again. Neither step downloads anything.
+
+## Modelfile instructions
+
+| Instruction | What it does                                                              |
+| -           | -                                                                         |
+| `FROM`      | Base model to build on; the only required instruction                     |
+| `SYSTEM`    | System prompt baked into the model                                        |
+| `PARAMETER` | Default runtime settings, one per line                                    |
+| `MESSAGE`   | Few-shot example exchanges baked into the context                         |
+| `TEMPLATE`  | The full prompt template; inherited from the base and rarely worth changing |
+| `ADAPTER`   | Apply a LoRA adapter to the base model                                    |
+| `LICENSE`   | Legal text shown by `ollama show`                                         |
+
+Useful parameters are `temperature` (lower is more deterministic), `num_ctx` (context window), `top_p`, `repeat_penalty`, and `stop` (repeat it for several stop strings).
+
+Rather than guessing at a model's template, start from its own Modelfile:
+
+```console
+ollama show --modelfile qwen2.5-coder:7b > base.Modelfile
+```
+
+`FROM` also accepts a path to a GGUF file or to a directory of safetensors weights, which is how you import a model that Ollama does not distribute.
+
+> **Note:** `PARAMETER num_ctx` bakes the context window into the model, which is another answer to [the context-window gotcha](#the-context-window-gotcha). The window then travels with the model instead of being set globally with `OLLAMA_CONTEXT_LENGTH` or separately in each tool.
+
+## With the Docker server
+
+`docker compose exec` runs the CLI *inside* the container, so the Modelfile has to be there too. Pipe it in from the repository directory:
+
+```console
+docker compose exec -T ollama sh -c 'cat > /tmp/Modelfile && ollama create cmd-explain -f /tmp/Modelfile' < cmd-explain.Modelfile
+```
+
+Or use a [client](#client-on-another-machine) on the host, which reads the file locally and sends its contents to the server:
+
+```console
+export OLLAMA_HOST=http://127.0.0.1:11444
+ollama create cmd-explain -f cmd-explain.Modelfile
+```
+
+Either way the model is stored in `OLLAMA_DATA` along with everything else, so it survives restarts and `docker compose down`.
+
+## When a Modelfile is overkill
+
+For a one-off task a saved prompt is enough, and [llm](#llm--ollama) already provides one:
+
+```console
+llm -m phi4:latest -s 'Explain this shell command in one line' 'tar -x --occurrence=1 bin/ollama'
+
+# save it as a reusable template
+llm -m phi4:latest -s 'Explain this shell command in one line' --save explain
+llm -t explain 'ss -tlnp | grep 11444'
+```
+
+Build a custom model when you want the behaviour to follow the model *everywhere*, including Aider, OpenCode, Open WebUI and the raw API, rather than in one CLI.
 
 # Web interface
 

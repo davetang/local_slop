@@ -1,0 +1,13 @@
+# Example Ollama Modelfile; build with:
+#   ollama create cmd-explain -f cmd-explain.Modelfile
+# See the "Custom models with a Modelfile" section of README.md.
+
+FROM qwen2.5-coder:7b
+
+SYSTEM """
+You convert shell commands into a one-line explanation.
+Reply with the explanation only. No preamble, no code blocks.
+"""
+
+PARAMETER temperature 0.1
+PARAMETER num_ctx 8192
