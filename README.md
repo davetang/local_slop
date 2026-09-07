@@ -8,6 +8,10 @@
   - [Usage](#usage)
   - [Configuration](#configuration)
   - [Access from other computers](#access-from-other-computers)
+- [Web interface](#web-interface)
+  - [Open WebUI](#open-webui)
+  - [Browser-only clients and CORS](#browser-only-clients-and-cors)
+  - [Open WebUI licensing](#open-webui-licensing)
 - [Claude Code](#claude-code)
 - [Create Python virtual environment](#create-python-virtual-environment)
 - [Install Aider](#install-aider)
@@ -250,6 +254,104 @@ export OLLAMA_API_BASE=http://<host-ip>:<port>
 ```
 
 > **Note:** publishing the port exposes an unauthenticated API to your network. Only do this on a trusted LAN, and add a firewall rule (or bind the port to a specific interface) if needed.
+
+# Web interface
+
+Ollama ships an HTTP API but no browser UI, so a web frontend is a separate service that talks to the same API. [Open WebUI](https://github.com/open-webui/open-webui) is the usual choice: it auto-discovers your installed models, keeps chat history, supports multiple user accounts, and can chat with uploaded documents.
+
+| Tool                                                              | Shape                              | Why pick it                                                                                                     |
+| -                                                                 | -                                  | -                                                                                                               |
+| [Open WebUI](https://github.com/open-webui/open-webui)            | Container (Python + SvelteKit)     | Full ChatGPT-like app: accounts, chat history, RAG over uploads, web search, model management. The default choice. |
+| [Hollama](https://github.com/fmaclen/hollama)                     | Static single-page app             | Minimal; no server-side state, talks to Ollama straight from the browser                                        |
+| [Page Assist](https://github.com/n4ze3m/page-assist)              | Browser extension                  | Sidebar chat plus question-answering over the page you are on; nothing to deploy                                |
+| [LibreChat](https://github.com/danny-avila/LibreChat)             | Container + MongoDB                | Multi-user, multi-provider ChatGPT replacement; more capable but more to configure                              |
+| [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm)      | Container or desktop app           | Document-centric: workspaces with built-in RAG, where chat is the interface to your files                       |
+
+## Open WebUI
+
+Run it as its own container and point it at the Ollama API:
+
+```console
+docker run -d \
+  --name open-webui \
+  --restart unless-stopped \
+  -p 3000:8080 \
+  -e OLLAMA_BASE_URL=http://<host-ip>:<port> \
+  -v open-webui:/app/backend/data \
+  ghcr.io/open-webui/open-webui:main
+```
+
+`<port>` is your `OLLAMA_PORT` (`11444` in this repo) for the Docker server, or `11434` for the systemd service. Then open `http://<host-ip>:3000`. The first account you create becomes the admin; later sign-ups can be held for approval from **Admin Panel > Settings > General**. Chats, accounts and settings live in the `open-webui` volume, so the container can be recreated without losing them.
+
+### Alongside the Docker Ollama server
+
+If you are using the `docker-compose.yml` in this repo, add Open WebUI as a second service so both start together and share a network:
+
+```yaml
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    depends_on:
+      - ollama
+    ports:
+      - "${WEBUI_PORT:-3000}:8080"
+    volumes:
+      - "${WEBUI_DATA:-./open-webui_data}:/app/backend/data"
+    environment:
+      # Reach the other service by its Compose name, on the container port.
+      - OLLAMA_BASE_URL=http://ollama:11434
+    restart: unless-stopped
+```
+
+Because the two containers share the Compose network, Open WebUI reaches Ollama at `http://ollama:11434`, which is the *container* port and not the published `OLLAMA_PORT`.
+
+### Alongside the systemd Ollama service
+
+The [Server](#server) section above already sets `OLLAMA_HOST=0.0.0.0:11434`, so a container on the same host can reach it through the Docker gateway:
+
+```console
+docker run -d \
+  --name open-webui \
+  --restart unless-stopped \
+  -p 3000:8080 \
+  --add-host=host.docker.internal:host-gateway \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  -v open-webui:/app/backend/data \
+  ghcr.io/open-webui/open-webui:main
+```
+
+If Open WebUI shows no models, Ollama is probably still listening only on `127.0.0.1`; re-check the systemd override and `ss -tlnp | grep 11434`.
+
+## Browser-only clients and CORS
+
+Open WebUI calls Ollama from its own backend, so CORS never comes into it. Clients that run entirely in the browser (Hollama, Page Assist) call the API from the page itself, and Ollama has to be told to allow that origin:
+
+```console
+sudo EDITOR=vim systemctl edit ollama.service
+```
+
+Add:
+
+```
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:11434"
+Environment="OLLAMA_ORIGINS=http://localhost:3000,http://<host-ip>:3000"
+```
+
+Reload and restart:
+
+```console
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+For the Docker server, add `OLLAMA_ORIGINS` to the `environment:` block of the `ollama` service instead. `OLLAMA_ORIGINS=*` works but lets any page you visit drive your models; prefer listing the origins you actually use.
+
+> **Note:** the Ollama API has no authentication of its own, so anything that can reach the port can pull, run and delete models. Keep `11434`/`OLLAMA_PORT` on a trusted LAN and let Open WebUI's accounts be the front door; do not expose the raw API to the internet.
+
+## Open WebUI licensing
+
+Open WebUI is free to use, but recent releases carry a modified BSD-3 licence that requires keeping its branding visible unless you are under 50 users or have an agreement with the maintainers. Fine for personal and small-team use; worth reading before rebranding it for an organisation.
 
 # Claude Code
 
