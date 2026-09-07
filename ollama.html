@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ollama</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfa;
+    --fg: #1c1c1a;
+    --muted: #6b6b66;
+    --line: #dcdcd6;
+    --panel: #ffffff;
+    --accent: #2f6f4f;
+    --error: #a33;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a19;
+      --fg: #e6e6e2;
+      --muted: #97978f;
+      --line: #35352f;
+      --panel: #222220;
+      --accent: #7fbf9a;
+      --error: #e08b8b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.15rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); font-size: .85rem; margin: 0 0 1.5rem; }
+  fieldset {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: .75rem 1rem 1rem;
+    margin: 0 0 1rem;
+    background: var(--panel);
+  }
+  legend { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; padding: 0 .35rem; }
+  .row { display: flex; gap: .75rem; flex-wrap: wrap; }
+  .row label { flex: 1 1 12rem; font-size: .8rem; color: var(--muted); }
+  input, select, textarea, button {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .9rem;
+    color: var(--fg);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: .5rem .6rem;
+    width: 100%;
+  }
+  textarea { resize: vertical; min-height: 5.5rem; }
+  .actions { display: flex; gap: .6rem; align-items: center; margin-top: .75rem; }
+  button {
+    width: auto;
+    cursor: pointer;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-family: inherit;
+    font-weight: 600;
+    padding: .5rem 1.1rem;
+  }
+  button.secondary { background: transparent; color: var(--muted); border-color: var(--line); font-weight: 400; }
+  button:disabled { opacity: .45; cursor: default; }
+  .hint { color: var(--muted); font-size: .78rem; }
+  #out {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .9rem;
+    min-height: 3rem;
+    margin: 0;
+  }
+  #out:empty::before { content: "…"; color: var(--muted); }
+  #think {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .8rem;
+    color: var(--muted);
+    border-left: 2px solid var(--line);
+    padding-left: .7rem;
+    margin: 0 0 .9rem;
+  }
+  #stats { color: var(--muted); font-size: .78rem; margin-top: .75rem; font-variant-numeric: tabular-nums; }
+  .error { color: var(--error); }
+  footer { color: var(--muted); font-size: .78rem; margin-top: 2rem; border-top: 1px solid var(--line); padding-top: .9rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Ollama</h1>
+  <p class="sub">
+    One prompt per request to Ollama's <code>/api/generate</code>. No chat history, no system
+    prompt, no sampling options: the selected model's own Modelfile values are what run.
+    Thinking is switched off for the models that have it.
+  </p>
+
+  <fieldset>
+    <legend>Server</legend>
+    <div class="row">
+      <label>Endpoint<input id="host" spellcheck="false" value="http://127.0.0.1:11444"></label>
+      <label>Model<select id="model">
+        <option value="cmd-explain" data-placeholder="tar -x --occurrence=1 bin/ollama">cmd-explain</option>
+        <option value="translate" data-think="false" data-placeholder="The quick brown fox jumps over the lazy dog.">translate</option>
+      </select></label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Prompt</legend>
+    <textarea id="prompt" autofocus spellcheck="false"></textarea>
+    <div class="actions">
+      <button id="send">Send</button>
+      <button id="stop" class="secondary" disabled>Stop</button>
+      <span class="hint">Ctrl/Cmd + Enter</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Response</legend>
+    <pre id="think" hidden></pre>
+    <p id="out"></p>
+    <div id="stats"></div>
+  </fieldset>
+
+  <footer>
+    Nothing is stored or sent anywhere else; the page talks straight to the Ollama API.
+    A failure with no status code is almost always CORS: serve this file over
+    <code>http://localhost</code> rather than opening it from disk, or add your origin to
+    <code>OLLAMA_ORIGINS</code> on the server.
+  </footer>
+</main>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const host = $('host'), model = $('model'), prompt = $('prompt');
+  const send = $('send'), stop = $('stop'), out = $('out'), stats = $('stats');
+  const think = $('think');
+
+  // Remember the endpoint and model between visits; nothing else is persisted.
+  for (const el of [host, model]) {
+    const fallback = el.value;
+    try {
+      const saved = localStorage.getItem('ollama.' + el.id);
+      if (saved) el.value = saved;
+      if (!el.value) el.value = fallback;   // a select ignores an option it no longer offers
+      el.addEventListener('change', () => {
+        try { localStorage.setItem('ollama.' + el.id, el.value.trim()); } catch (e) {}
+      });
+    } catch (e) { /* private browsing */ }
+  }
+
+  // Each model gets its own example prompt.
+  function hint() {
+    const opt = model.selectedOptions[0];
+    prompt.placeholder = (opt && opt.dataset.placeholder) || '';
+  }
+  model.addEventListener('change', hint);
+  hint();
+
+  // Only the model and the prompt, plus "think" where the option declares it:
+  // sending that field to a model with no thinking mode is an error.
+  function payload(text) {
+    const body = { model: model.value.trim(), prompt: text, stream: true };
+    const opt = model.selectedOptions[0];
+    if (opt && opt.dataset.think) body.think = opt.dataset.think === 'true';
+    return body;
+  }
+
+  const secs = (ns) => (ns || 0) / 1e9;
+  const fmt = (ns) => secs(ns).toFixed(2) + 's';
+
+  function report(d) {
+    if (!d) return '';
+    const gen = secs(d.eval_duration);
+    const rate = gen > 0 && d.eval_count ? (d.eval_count / gen).toFixed(1) + ' tok/s' : '';
+    return [
+      d.prompt_eval_count != null ? d.prompt_eval_count + ' prompt tokens' : '',
+      d.eval_count != null ? d.eval_count + ' generated' : '',
+      rate,
+      d.load_duration ? 'load ' + fmt(d.load_duration) : '',
+      d.total_duration ? 'total ' + fmt(d.total_duration) : ''
+    ].filter(Boolean).join(' · ');
+  }
+
+  let controller = null;
+
+  function busy(on) {
+    send.disabled = on;
+    stop.disabled = !on;
+  }
+
+  async function run() {
+    const text = prompt.value.trim();
+    if (!text) { prompt.focus(); return; }
+
+    const base = host.value.trim().replace(/\/+$/, '');
+    out.textContent = '';
+    out.classList.remove('error');
+    think.textContent = '';
+    think.hidden = true;
+    stats.textContent = 'waiting for the model…';
+    controller = new AbortController();
+    busy(true);
+
+    const started = performance.now();
+    let final = null;
+
+    // A thinking model streams its reasoning in "thinking", not "response", so a
+    // page that watches only "response" looks frozen until the answer starts.
+    const consume = (line) => {
+      if (!line.trim()) return;
+      const chunk = JSON.parse(line);
+      if (chunk.error) throw new Error(chunk.error);
+      if (chunk.thinking) { think.hidden = false; think.textContent += chunk.thinking; }
+      if (chunk.response) out.textContent += chunk.response;
+      if (chunk.done) final = chunk;
+    };
+
+    try {
+      const res = await fetch(base + '/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Only the model and the prompt: no messages array, no system, no options.
+        body: JSON.stringify(payload(text)),
+        signal: controller.signal
+      });
+
+      if (!res.ok) {
+        throw new Error('HTTP ' + res.status + ' ' + res.statusText + ': ' +
+                        (await res.text()).slice(0, 300));
+      }
+
+      // The response is newline-delimited JSON, one object per token.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) consume(line);
+      }
+      consume(buffer);
+
+      const wall = ((performance.now() - started) / 1000).toFixed(2) + 's wall';
+      stats.textContent = [report(final), wall].filter(Boolean).join(' · ');
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        stats.textContent = 'stopped';
+      } else {
+        out.classList.add('error');
+        out.textContent = String(err.message || err);
+        stats.textContent = 'request failed';
+      }
+    } finally {
+      controller = null;
+      busy(false);
+    }
+  }
+
+  send.addEventListener('click', run);
+  stop.addEventListener('click', () => controller && controller.abort());
+  prompt.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); }
+  });
+})();
+</script>
+</body>
+</html>
